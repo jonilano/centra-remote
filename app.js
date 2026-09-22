@@ -2,7 +2,7 @@
 (() => {
   const P=window.TreadmillProtocol, $=id=>document.getElementById(id);
   const serviceId=P.uuid('fff0');
-  const state={version:7,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
+  const state={version:8,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
   let device,writer,notify,notificationListener,disconnectListener;
   let generation=0,commandEpoch=0,connecting=false,initializing=false,initAttempted=false,replyWaiter;
   let statusSerial=0,stopBeforeStatus=0,heartbeatPending=false;
@@ -89,7 +89,18 @@
   const decoder=P.decoder(f=>{
     log('RX',{hex:P.hex(f)});
     if(replyWaiter&&f[2]===0xa0&&f[3]===replyWaiter.index)replyWaiter.resolve(f);
-    const t=P.status(f);if(!t)return;
+    const t=P.status(f);
+    if(!t){
+      if(f[2]===0xa1){
+        const wasActive=active();
+        state.telemetry=null;lastStatusAt=0;
+        notice='Treadmill status is not recognized ('+P.hex(f)+'). With the belt stopped, turn its power switch off and on, then reconnect.';
+        log('Unrecognized status packet',{hex:P.hex(f)});
+        if(wasActive&&!stopRequested)void stop('Unrecognized status packet');
+        render();
+      }
+      return;
+    }
     const previousPhase=state.telemetry?.phase;
     if([1,2].includes(previousPhase)&&[0,4,5].includes(t.phase)&&!stopRequested){notice='The treadmill is stopping without a Stop request from this page.';log('Treadmill initiated stop',{previousPhase,phase:t.phase,speed:t.speed,target:t.target},true);}
     state.telemetry=t;lastStatusAt=Date.now();statusSerial++;
