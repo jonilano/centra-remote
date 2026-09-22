@@ -2,7 +2,7 @@
 (() => {
   const P=window.TreadmillProtocol, $=id=>document.getElementById(id);
   const serviceId=P.uuid('fff0');
-  const state={version:8,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
+  const state={version:9,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
   let device,writer,notify,notificationListener,disconnectListener;
   let generation=0,commandEpoch=0,connecting=false,initializing=false,initAttempted=false,replyWaiter;
   let statusSerial=0,stopBeforeStatus=0,heartbeatPending=false;
@@ -34,8 +34,8 @@
     const base=baseSpeed();$('slower').disabled=!canSpeed()||!Number.isInteger(base)||base<=10;$('faster').disabled=!canSpeed()||!Number.isInteger(base)||base>=60;
     $('speed').textContent=live&&fresh()&&t ? t.phase===1?String(t.countdown??'…'):format(t.speed) : '—';
     $('unit').textContent=live&&fresh()&&t?.phase===1?'starting in':'km/h';
-    $('phase').textContent=!live?'Ready when you are':!fresh()?'Waiting for status':startPending?'Starting…':stopRequested?'Stopping…':({0:'Ready',1:'Get ready',2:'Walking',4:'Slowing down',5:'Stopped'}[t?.phase]??'Check treadmill');
-    $('target').textContent=!live?'Connect to see your treadmill’s speed.':!fresh()?'Speed is unavailable until fresh data arrives.':speedPending?'Requesting '+format(speedPending.target)+' km/h…':t?.phase===1?'The treadmill’s own countdown':t?.phase===2&&t.target>=10&&t.target!==t.speed?'Target '+format(t.target)+' km/h · adjusting':t?.phase===2?'Live speed from your treadmill':state.verified?'Press Start when you’re ready.':initializing?'Checking your treadmill automatically…':initAttempted?'Identification failed. See the message below.':'Waiting to check your treadmill…';
+    $('phase').textContent=!live?'Ready when you are':!fresh()?'Waiting for status':startPending?'Starting…':stopRequested?'Stopping…':({0:'Ready',1:'Get ready',2:'Walking',4:'Slowing down',5:'Stopped',8:'Asleep'}[t?.phase]??'Check treadmill');
+    $('target').textContent=!live?'Connect to see your treadmill’s speed.':!fresh()?'Speed is unavailable until fresh data arrives.':speedPending?'Requesting '+format(speedPending.target)+' km/h…':t?.phase===8?'Wake the treadmill to use Start.':t?.phase===1?'The treadmill’s own countdown':t?.phase===2&&t.target>=10&&t.target!==t.speed?'Target '+format(t.target)+' km/h · adjusting':t?.phase===2?'Live speed from your treadmill':state.verified?'Press Start when you’re ready.':initializing?'Checking your treadmill automatically…':initAttempted?'Identification failed. See the message below.':'Waiting to check your treadmill…';
     $('message').textContent=notice;$('alarm').textContent=alarm;$('alarm').hidden=!alarm;
   }
   async function keepAwake(){
@@ -104,7 +104,8 @@
     const previousPhase=state.telemetry?.phase;
     if([1,2].includes(previousPhase)&&[0,4,5].includes(t.phase)&&!stopRequested){notice='The treadmill is stopping without a Stop request from this page.';log('Treadmill initiated stop',{previousPhase,phase:t.phase,speed:t.speed,target:t.target},true);}
     state.telemetry=t;lastStatusAt=Date.now();statusSerial++;
-    if(![0,1,2,4,5].includes(t.phase)){
+    if(t.phase===8){mayMove=false;releaseAwake();notice='Treadmill is asleep. Turn its power switch off and on, then reconnect. Waking through Bluetooth is not yet supported.';if(previousPhase!==8)log('Treadmill entered sleep',undefined,true);}
+    if(![0,1,2,4,5,8].includes(t.phase)){
       alarm='Unrecognized treadmill state. Check the machine and use its power switch if needed.';
       if(active()&&!stopRequested)void stop('Unrecognized treadmill state');
     }

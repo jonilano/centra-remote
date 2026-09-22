@@ -31,6 +31,8 @@
   }
   function status(f){
     if(f[2]!==0xa1)return null;
+    // Matched to physical sleep by the user in two captured reports.
+    if(hex(f)==='fd 04 a1 08 ad fe')return {phase:8,speed:0,target:null,countdown:null};
     if(f.length===7 && f[3]===0 && f[4]===0)return {phase:0,speed:0,target:0,countdown:null};
     if(f.length===7 && f[3]===1)return {phase:1,speed:0,target:null,countdown:f[4]};
     if(f.length!==18)return null;
