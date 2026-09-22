@@ -2,7 +2,7 @@
 (() => {
   const P=window.TreadmillProtocol, $=id=>document.getElementById(id);
   const serviceId=P.uuid('fff0');
-  const state={version:9,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
+  const state={version:10,opened:new Date().toISOString(),deviceName:null,connection:'disconnected',verified:false,telemetry:null,packets:0,actions:[],events:[]};
   let device,writer,notify,notificationListener,disconnectListener;
   let generation=0,commandEpoch=0,connecting=false,initializing=false,initAttempted=false,replyWaiter;
   let statusSerial=0,stopBeforeStatus=0,heartbeatPending=false;
@@ -11,6 +11,7 @@
   const connected=()=>!!device?.gatt?.connected && !!writer;
   const fresh=()=>lastStatusAt>0 && Date.now()-lastStatusAt<3500;
   const idle=()=>state.telemetry?.phase===0 && fresh();
+  const resting=()=>fresh()&&[0,8].includes(state.telemetry?.phase);
   const active=()=>mayMove || startPending || [1,2,4].includes(state.telemetry?.phase);
   const foreground=()=>document.visibilityState!=='hidden';
   const format=n=>(n/10).toFixed(1);
@@ -21,7 +22,7 @@
     if($('reportDetails').open)$('report').value=report();
   }
   function report(){return JSON.stringify({...state,commandState:{startPending,stopRequested,stopInFlight,speedPending,mayMove},message:notice,alarm},null,2);}
-  function canStart(){return connected() && state.verified && idle() && foreground() && !connecting && !initializing && !startPending && !stopRequested && !stopInFlight && !speedPending;}
+  function canStart(){return connected() && state.verified && resting() && foreground() && !connecting && !initializing && !startPending && !stopRequested && !stopInFlight && !speedPending;}
   function canSpeed(){return connected() && state.verified && fresh() && state.telemetry?.phase===2 && foreground() && !startPending && !stopRequested && !stopInFlight && !speedPending;}
   function baseSpeed(){const t=state.telemetry;return Number.isInteger(t?.target)&&t.target>=10&&t.target<=60?t.target:t?.speed;}
   function render(){
@@ -30,12 +31,12 @@
     $('connect').disabled=connecting||live;$('connect').textContent=device?'Reconnect':'Connect';
     $('all').disabled=connecting||live;
     $('disconnect').disabled=!live||active()||stopInFlight||stopRequested;
-    $('start').disabled=!canStart();$('stop').disabled=!live||stopInFlight;
+    $('start').textContent=t?.phase===8?'Wake / Start':'Start';$('start').disabled=!canStart();$('stop').disabled=!live||stopInFlight;
     const base=baseSpeed();$('slower').disabled=!canSpeed()||!Number.isInteger(base)||base<=10;$('faster').disabled=!canSpeed()||!Number.isInteger(base)||base>=60;
     $('speed').textContent=live&&fresh()&&t ? t.phase===1?String(t.countdown??'…'):format(t.speed) : '—';
     $('unit').textContent=live&&fresh()&&t?.phase===1?'starting in':'km/h';
     $('phase').textContent=!live?'Ready when you are':!fresh()?'Waiting for status':startPending?'Starting…':stopRequested?'Stopping…':({0:'Ready',1:'Get ready',2:'Walking',4:'Slowing down',5:'Stopped',8:'Asleep'}[t?.phase]??'Check treadmill');
-    $('target').textContent=!live?'Connect to see your treadmill’s speed.':!fresh()?'Speed is unavailable until fresh data arrives.':speedPending?'Requesting '+format(speedPending.target)+' km/h…':t?.phase===8?'Wake the treadmill to use Start.':t?.phase===1?'The treadmill’s own countdown':t?.phase===2&&t.target>=10&&t.target!==t.speed?'Target '+format(t.target)+' km/h · adjusting':t?.phase===2?'Live speed from your treadmill':state.verified?'Press Start when you’re ready.':initializing?'Checking your treadmill automatically…':initAttempted?'Identification failed. See the message below.':'Waiting to check your treadmill…';
+    $('target').textContent=!live?'Connect to see your treadmill’s speed.':!fresh()?'Speed is unavailable until fresh data arrives.':speedPending?'Requesting '+format(speedPending.target)+' km/h…':t?.phase===8?'Wake / Start may start the belt after its countdown.':t?.phase===1?'The treadmill’s own countdown':t?.phase===2&&t.target>=10&&t.target!==t.speed?'Target '+format(t.target)+' km/h · adjusting':t?.phase===2?'Live speed from your treadmill':state.verified?'Press Start when you’re ready.':initializing?'Checking your treadmill automatically…':initAttempted?'Identification failed. See the message below.':'Waiting to check your treadmill…';
     $('message').textContent=notice;$('alarm').textContent=alarm;$('alarm').hidden=!alarm;
   }
   async function keepAwake(){
@@ -68,12 +69,12 @@
     return Promise.all([response,send(P.query(index),'identify '+index,epoch).catch(error=>{cancel(error);throw error;})]).then(([frame])=>frame);
   }
   async function identify(){
-    if(initializing||initAttempted||!connected()||!idle()||!foreground()||stopInFlight||stopRequested)return;
+    if(initializing||initAttempted||!connected()||!resting()||!foreground()||stopInFlight||stopRequested)return;
     initializing=true;initAttempted=true;state.verified=false;const gen=generation,epoch=commandEpoch;
     notice='Checking your treadmill…';render();
     try{
       for(let i=0;i<4;i++){
-        if(gen!==generation||epoch!==commandEpoch||!idle()||!foreground())throw new Error('Identification interrupted');
+        if(gen!==generation||epoch!==commandEpoch||!resting()||!foreground())throw new Error('Identification interrupted');
         const f=await query(i,epoch);
         if(!P.matchesProfile(i,f))throw new Error('This treadmill’s identification differs from the verified model');
       }
@@ -104,7 +105,7 @@
     const previousPhase=state.telemetry?.phase;
     if([1,2].includes(previousPhase)&&[0,4,5].includes(t.phase)&&!stopRequested){notice='The treadmill is stopping without a Stop request from this page.';log('Treadmill initiated stop',{previousPhase,phase:t.phase,speed:t.speed,target:t.target},true);}
     state.telemetry=t;lastStatusAt=Date.now();statusSerial++;
-    if(t.phase===8){mayMove=false;releaseAwake();notice='Treadmill is asleep. Turn its power switch off and on, then reconnect. Waking through Bluetooth is not yet supported.';if(previousPhase!==8)log('Treadmill entered sleep',undefined,true);}
+    if(t.phase===8){if(!startPending){mayMove=false;releaseAwake();notice='Treadmill is asleep. Wake / Start tests the Start command from sleep and may start the belt.';}if(previousPhase!==8)log('Treadmill entered sleep',undefined,true);}
     if(![0,1,2,4,5,8].includes(t.phase)){
       alarm='Unrecognized treadmill state. Check the machine and use its power switch if needed.';
       if(active()&&!stopRequested)void stop('Unrecognized treadmill state');
@@ -116,10 +117,12 @@
     if(t.phase!==2&&speedPending)cancelSpeed();
     if((t.phase===0||t.phase===5)&&t.speed===0&&!startPending)finishStopped();
     render();
-    if(idle()&&!connecting&&!initAttempted)void identify();
+    if(resting()&&!connecting&&!initAttempted)void identify();
   });
   async function start(){
     if(!canStart())return;
+    const fromSleep=state.telemetry?.phase===8;
+    if(fromSleep)log('Start from sleep test',undefined,true);
     const gen=generation,epoch=++commandEpoch;startPending=true;mayMove=true;alarm='';notice='Start requested. Waiting for the treadmill’s countdown…';render();void keepAwake();
     startDeadline=setTimeout(()=>{if(gen===generation&&startPending){alarm='Start response was not confirmed. Sending Stop.';void stop('Start confirmation timed out');}},4000);
     try{await send(P.start(),'Start',epoch);}catch(error){if(gen===generation&&epoch===commandEpoch){log('Start write failed',error.message,true);alarm='Start delivery is uncertain. Sending Stop.';void stop('Start write failed');}}
@@ -191,7 +194,7 @@
       if(device&&disconnectListener)device.removeEventListener('gattserverdisconnected',disconnectListener);
       if(device?.gatt?.connected)device.gatt.disconnect();cleanup();state.connection='disconnected';
       notice=error.name==='NotFoundError'?'No device selected. Try Connect again.':error.message;log('Connection error',notice,true);
-    }finally{if(gen===generation){connecting=false;render();if(idle())void identify();}}
+    }finally{if(gen===generation){connecting=false;render();if(resting())void identify();}}
   }
   $('connect').addEventListener('click',()=>connect());$('all').addEventListener('click',()=>connect(true));
   $('start').addEventListener('click',start);$('stop').addEventListener('click',()=>stop());
